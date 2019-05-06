@@ -38,7 +38,7 @@ namespace Core
         NatS... dim, class T>
         Meta_Inline static constexpr void assign(LHS&& lhs, Array<T, dim...> rhs)
         {
-            lhs[indexLHS] = rhs.e[indexRHS];
+            lhs[indexLHS] = rhs.elements[indexRHS];
         };
         
         template <class...>
@@ -158,24 +158,27 @@ namespace Core
      * All array operations use loop fusion
      */
     template <class Element, NatS... dimensions>
-    class Array
+    class StaticTensor
     {
     public:
         
-        using Dimensions = Meta::List<Meta::Index <dimensions>...>;
-        
         static constexpr NatS rank = sizeof...(dimensions);
         
+        using Dimensions = Meta::List<Meta::Index <dimensions>...>;
+        
         static constexpr NatS size = Meta::Max::call(Meta::product<Dimensions>, 1);
+        
+        Element elements[size];
         
         using IndexSet = Meta::IndexSequence <size>;//[0, 1, ... , size-1]
         using Indexer = StaticIndexer<dimensions...>;
         
-        Element e[size];
-        
+        /*
+         * Constructors
+         */
     public:
         
-        Array() = default;
+        StaticTensor() = default;
         
         /*
          * The Array must be constructed with a combination of args providing the exact number of components
@@ -186,13 +189,13 @@ namespace Core
         NatS componentSum = Meta::sum< Meta::List<Detail::ComponentCount<metaDecay<Args>>...> >,
         typename = metaIf< Meta::Equal::call(componentSum, size), void>
         >
-        Meta_Inline explicit constexpr Array(Args &&... args)
+        Meta_Inline explicit constexpr StaticTensor(Args &&... args)
         {
             using namespace Meta;
             
             //the number of components each arg will provide
             using CountsPerArg = List< Index<Detail::ComponentCount<metaDecay<Args>>::value>...>;
-            //Detail::Print<CountsPerArg>::call();
+            
             using IndicesRHS =
             concat<
             IndexSequence<Detail::ComponentCount<metaDecay<Args>>::value
@@ -201,16 +204,16 @@ namespace Core
             using IndexPairs = zip<IndexSet, IndicesRHS>;
             using IndexPart = Meta::partition<IndexPairs, CountsPerArg>;
             
-            Detail::Construct<IndexPart>::call(e, args...);
+            Detail::Construct<IndexPart>::call(elements, args...);
         }
         
         /*
          * Assignment
          */
         template<typename ElementRHS>
-        auto &operator=(Array<ElementRHS, dimensions...> const &toCopy)
+        auto &operator=(StaticTensor<ElementRHS, dimensions...> const &toCopy)
         {
-            Detail::UnaryTransform<Meta::Identity, IndexSet>::call(e, toCopy.e);
+            Detail::UnaryTransform<Meta::Identity, IndexSet>::call(elements, toCopy.elements);
             return *this;
         }
         
@@ -218,21 +221,90 @@ namespace Core
          * Copy, different type
          */
         template<typename ElementRHS>
-        Array(Array<ElementRHS, dimensions...> const &toCopy)
+        StaticTensor(StaticTensor<ElementRHS, dimensions...> const &toCopy)
         {
             *this = toCopy;
         }
         
-        Array(Array const &toCopy)
+        StaticTensor(StaticTensor const &toCopy)
         {
             *this = toCopy;
         }
         
+        ~StaticTensor() = default;
+        
+        /*
+         * Accessors
+         */
+    public:
+        
+        Meta_Inline auto getRank() const
+        {
+            return rank;
+        }
+        
+        Meta_Inline auto getDimension(NatS rankIndex) const
+        {
+            static const auto _dimensions = StaticTensor<NatS, rank>(dimensions...);
+            return _dimensions[rankIndex];
+        }
+        
+        Meta_Inline auto getDimensions() const
+        {
+            return StaticTensor<NatS, rank>(dimensions...);
+        }
+        
+        Meta_Inline auto getSize() const
+        {
+            return size;
+        }
+        
+        /*
+         * 1 dimensional access, [0, size-1], unchecked
+         */
+        template<typename I>
+        Meta_Inline auto& operator[](I&& i)
+        {
+            return elements[i];
+        }
+        
+        template<typename I>
+        Meta_Inline auto const& operator[](I&& i) const
+        {
+            return elements[i];
+        }
+        
+        /*
+         * static-rank, static-value index
+         */
+        template <NatS ... indices>
+        Meta_Inline auto& index()
+        {
+            return elements[Indexer::template index< indices... >()];
+        }
+        
+        /*
+         * static-rank, dynamic-value index
+         *
+         * A partial index will provide the first element at that slice
+         */
+        template<
+        class ... Indices,
+        typename = metaIf<Meta::LessThanOrEqual::call(sizeof...(Indices), rank), void>
+        >
+        Element& operator()(Indices&&... indices)
+        {
+            return elements[Indexer::index(indices...)];
+        }
+        
+        /*
+         * Slice
+         */
         template <class...> struct GetArray{};
         template <class... Values>
         struct GetArray<Meta::List<Values...>>
         {
-            using type = Array<Element, Values::value...>;
+            using type = StaticTensor<Element, Values::value...>;
         };
         
         /*
@@ -246,74 +318,18 @@ namespace Core
             using SliceDimensions = Meta::drop<sizeof...(Indices), Dimensions>;
             using Slice = typename GetArray<SliceDimensions>::type;
             Slice slice;
-            Detail::CopySlice<typename Slice::IndexSet>::call(Indexer::call(indices...), slice.e, e);
+            Detail::CopySlice<typename Slice::IndexSet>::call(Indexer::call(indices...), slice.elements, elements);
             return slice;
         }
         
         /*
-         * Rank 0 implicit conversion to Element
-         *
-         template <typename = metaIf<rank == 0, void>>
-         operator Element() const
-         {
-         return e[0];
-         }*/
-        
-        ~Array() = default;
-        
-        /*
-         * Index the array with a full or parial index
-         * A partial index will provide the first element at that slice
+         * Tensor-tensor component-wise binary assignment operators, mutating this
          */
-        template<class ... Indices,
-        typename = metaIf<Meta::LessThanOrEqual::call(sizeof...(Indices), rank), void>
-        >
-        Element& operator()(Indices&&... indices)
-        {
-            return e[Indexer::index(indices...)];
-        }
-        
-        template <NatS ... indices>
-        Meta_Inline auto& index()
-        {
-            return e[Indexer::template index< indices... >()];
-        }
-        
-        /*
-         * 1 dimensional access, [0, size-1], unchecked
-         */
-        Meta_Inline Element& operator[](NatS index)
-        {
-            return e[index];
-        }
-        
-        Meta_Inline Element const& operator[](NatS index) const
-        {
-            return e[index];
-        }
-        
-        template <typename RHS>
-        Meta_Inline auto & fill (RHS&& rhs)
-        {
-            for(Nat i = 0; i < size; i++)
-            {
-                e[i] = rhs;
-            }
-            return *this;
-        }
-        
-        auto getSize()
-        {
-            return size;
-        }
-        
-        //array-array operations
-        
 #define BinaryOperator(symbol, name)\
 template <class ElementRHS>\
-Meta_Inline auto& operator symbol (Array<ElementRHS, dimensions...> const& rhs)\
+Meta_Inline auto& operator symbol (StaticTensor<ElementRHS, dimensions...> const& rhs)\
 {\
-Detail::BinaryTransform<Meta::name, IndexSet>::call(e, e, rhs.e);\
+Detail::BinaryTransform<Meta::name, IndexSet>::call(elements, elements, rhs.elements);\
 return *this;\
 }\
 
@@ -330,31 +346,35 @@ return *this;\
         
 #undef BinaryOperator
         
-#define LogicalOperator(symbol, name)\
+        /*
+         * Tensor-tensor component-wise comparison, returning tensor of bools
+         */
+#define ComparisonOperator(symbol, name)\
 template <class ElementRHS>\
-Meta_Inline auto operator symbol (Array<ElementRHS, dimensions...> const& rhs)\
+Meta_Inline auto operator symbol (StaticTensor<ElementRHS, dimensions...> const& rhs)\
 {\
-Array<Bool, dimensions...> result;\
-Detail::BinaryTransform<Meta::name, IndexSet>::call(result.e, e, rhs.e);\
+StaticTensor<Bool, dimensions...> result;\
+Detail::BinaryTransform<Meta::name, IndexSet>::call(result.elements, elements, rhs.elements);\
 return result;\
 }\
 
-        LogicalOperator(==, Equal)
-        LogicalOperator(!=, NotEqual)
-        LogicalOperator(>, GreaterThan)
-        LogicalOperator(>=, GreaterThanOrEqual)
-        LogicalOperator(<, LessThan)
-        LogicalOperator(<=, LessThanOrEqual)
+        ComparisonOperator(==, Equal)
+        ComparisonOperator(!=, NotEqual)
+        ComparisonOperator(>, GreaterThan)
+        ComparisonOperator(>=, GreaterThanOrEqual)
+        ComparisonOperator(<, LessThan)
+        ComparisonOperator(<=, LessThanOrEqual)
         
-#undef LogicalOperator
+#undef ComparisonOperator
         
-        //array-scalar operations
-        
+        /*
+         * Tensor-scalar binary assignment operators, mutating this
+         */
 #define BinaryOperator(symbol, name)\
 template <class RHS, typename = metaIf<Meta::Equal::call(Detail::ComponentCount<metaDecay<RHS>>::value, 1), void>>\
 Meta_Inline auto& operator symbol (RHS&& rhs)\
 {\
-Detail::BinaryTransform<Meta::name, IndexSet>::call(e, e, rhs);\
+Detail::BinaryTransform<Meta::name, IndexSet>::call(elements, elements, rhs);\
 return *this;\
 }\
 
@@ -371,32 +391,40 @@ return *this;\
         
 #undef BinaryOperator
         
-#define LogicalOperator(symbol, name)\
-template <class RHS, typename = metaIf<Meta::Equal::call(Detail::ComponentCount<metaDecay<RHS>>::value, 1), void>>\
+        /*
+         * Tensor-scalar comparison, returning a tensor of bools
+         */
+#define ComparisonOperator(symbol, name)\
+template <\
+class RHS, \
+typename = metaIf<Meta::Equal::call(Detail::ComponentCount<metaDecay<RHS>>::value, 1), void>>\
 Meta_Inline auto operator symbol (RHS&& rhs)\
 {\
-Array<Bool, dimensions...> result;\
-Detail::BinaryTransform<Meta::name, IndexSet>::call(result.e, e, rhs);\
+StaticTensor<Bool, dimensions...> result;\
+Detail::BinaryTransform<Meta::name, IndexSet>::call(result.elements, elements, rhs);\
 return result;\
 }\
 
-        LogicalOperator(==, Equal)
-        LogicalOperator(!=, NotEqual)
-        LogicalOperator(>, GreaterThan)
-        LogicalOperator(>=, GreaterThanOrEqual)
-        LogicalOperator(<, LessThan)
-        LogicalOperator(<=, LessThanOrEqual)
+        ComparisonOperator(==, Equal)
+        ComparisonOperator(!=, NotEqual)
+        ComparisonOperator(>, GreaterThan)
+        ComparisonOperator(>=, GreaterThanOrEqual)
+        ComparisonOperator(<, LessThan)
+        ComparisonOperator(<=, LessThanOrEqual)
         
-#undef LogicalOperator
+#undef ComparisonOperator
         
     };
     
+    /*
+     * Unary operators, mutating the input by reference
+     */
 #define UnaryOperator(symbol, name)\
-template <template<class, NatS...> typename Array, class ElementLHS, NatS... dimensions>\
+template <template<class, NatS...> typename StaticTensor, class ElementLHS, NatS... dimensions>\
 Meta_Inline static auto& operator symbol (\
-Array<ElementLHS, dimensions...>& lhs)\
+StaticTensor<ElementLHS, dimensions...>& lhs)\
 {\
-Detail::UnaryTransform<Meta::name, typename Array<ElementLHS, dimensions...>::IndexSet>::call(lhs.e, lhs.e);\
+Detail::UnaryTransform<Meta::name, typename StaticTensor<ElementLHS, dimensions...>::IndexSet>::call(lhs.elements, lhs.elements);\
 return lhs;\
 }\
 
@@ -404,13 +432,16 @@ return lhs;\
     UnaryOperator(--, Decrement)
     
 #undef UnaryOperator
+    
     /*
+     * Unary operators, copying input by value
+     *
      #define UnaryOperator(symbol, name)\
-     template <template<class, NatS...> typename Array, class ElementLHS, NatS... dimensions>\
+     template <template<class, NatS...> typename StaticTensor, class ElementLHS, NatS... dimensions>\
      Meta_Inline static auto operator symbol (\
-     Array<ElementLHS, dimensions...> lhs)\
+     StaticTensor<ElementLHS, dimensions...> lhs)\
      {\
-     Detail::UnaryTransform<Meta::name, typename Array<ElementLHS, dimensions...>::IndexSet>::call(lhs.e, lhs.e);\
+     Detail::UnaryTransform<Meta::name, typename StaticTensor<ElementLHS, dimensions...>::IndexSet>::call(lhs.elements, lhs.elements);\
      return lhs;\
      }\
      
@@ -419,20 +450,23 @@ return lhs;\
      UnaryOperator(~, BitNot)
      
      #undef UnaryOperator
-     
      */
-    
-    template<template<class, NatS...> typename Array, class ElementLHS, NatS...dimensions>
-    __attribute__((always_inline))inline static auto operator-(Array<ElementLHS, dimensions...> lhs)
+    template<template<class, NatS...> typename StaticTensor, class ElementLHS, NatS...dimensions>
+    __attribute__((always_inline)) inline static auto
+    operator-(StaticTensor<ElementLHS, dimensions...> lhs)
     {
-        Detail::UnaryTransform<Meta::Negate, typename Array<ElementLHS, dimensions...>::IndexSet>::call(lhs.e, lhs.e);
+        Detail::UnaryTransform<Meta::Negate, typename StaticTensor<ElementLHS, dimensions...>::IndexSet>::call(lhs.elements,
+                                                                                                               lhs.elements);
         return lhs;
     }
     
+    /*
+     * tensor-scalar binary operators
+     */
 #define BinaryOperator(symbol)\
-template <template<class, NatS...> typename Array, class ElementLHS, class RHS, NatS... dimensions>\
+template <template<class, NatS...> typename StaticTensor, class ElementLHS, class RHS, NatS... dimensions>\
 Meta_Inline static auto operator symbol (\
-Array<ElementLHS, dimensions...> lhs, \
+StaticTensor<ElementLHS, dimensions...> lhs, \
 RHS const& rhs)\
 {\
 lhs symbol##= rhs;\
@@ -452,14 +486,17 @@ return lhs;\
     
 #undef BinaryOperator
     
+    /*
+     * scalar-tensor binary operators
+     */
 #define BinaryOperator(symbol, name)\
-template <template<class, NatS...> typename _Array, class ElementRHS, class LHS, NatS... dimensions>\
-Meta_Inline static Meta::_if< Meta::Equal::call(1, Detail::ComponentCount<LHS>::value), _Array<ElementRHS, dimensions...>> \
+template <template<class, NatS...> typename _StaticTensor, class ElementRHS, class LHS, NatS... dimensions>\
+Meta_Inline static Meta::_if< Meta::Equal::call(1, Detail::ComponentCount<LHS>::value), _StaticTensor<ElementRHS, dimensions...>> \
 operator symbol (\
 LHS const& lhs, \
-_Array<ElementRHS, dimensions...> rhs)\
+_StaticTensor<ElementRHS, dimensions...> rhs)\
 {\
-Detail::BinaryTransform<Meta::name, typename _Array<ElementRHS, dimensions...>::IndexSet>::call(rhs.e, lhs, rhs.e);\
+Detail::BinaryTransform<Meta::name, typename _StaticTensor<ElementRHS, dimensions...>::IndexSet>::call(rhs.elements, lhs, rhs.elements);\
 return rhs;\
 }\
 
@@ -478,54 +515,33 @@ return rhs;\
     
 }//end core
 
-namespace Math
-{
-    template< typename F, template <class, NatS...> typename Array, class Element, NatS... dimensions>
-    static auto transform(F&& f, Array<Element, dimensions...> const& array)
-    {
-        using ImageType = typename function_traits<F>::Return;
-        
-        Array<ImageType, dimensions...> output;
-        
-        for(NatS i = 0; i < Array<Element, dimensions...>::size; i++)
-        {
-            output[i] = f(array[i]);
-        }
-        
-        return output;
-    }
-    
-    template <template <class, NatS...> typename _Array, class Element, NatS... dimensions>
-    static auto round(_Array<Element, dimensions...>&& a)
-    {
-        return transform<float(*)(float)>(std::round, a);
-    }
-}
-
 namespace Format
 {
     template <class Element, NatS... dimensions>
-    auto ascii(Core::Array<Element, dimensions...> const& v)
+    auto ascii(Core::StaticTensor<Element, dimensions...> const& v)
     {
         std::stringstream ss;
         ss << "[";
-        for(NatS i = 0; i < Core::Array<Element, dimensions...>::size; i++)
+        for(NatS i = 0; i < Core::StaticTensor<Element, dimensions...>::size; i++)
         {
-            ss << v.e[i];
-            if(i < Core::Array<Element, dimensions...>::size-1) ss << ", ";
+            ss << v.elements[i];
+            if(i < Core::StaticTensor<Element, dimensions...>::size-1) ss << ", ";
         }
         ss << "]";
         return ss.str();
     }
     
+    /*
+     * Primitives, optimized
+     */
     template<typename Element, NatS ... dimensions, typename Writer,
     typename = metaIf<std::is_fundamental<Element>::value, void>
     >
-    inline void serialize(Core::Array<Element, dimensions...> const & source, Writer&& writer)
+    inline void serialize(Core::StaticTensor<Element, dimensions...> const & source, Writer&& writer)
     {
         try
         {
-            writer(&source[0], Core::Array<Element, dimensions...>::size * sizeof(Element));
+            writer(&source[0], Core::StaticTensor<Element, dimensions...>::size * sizeof(Element));
         }
         catch (std::exception& e)
         {
@@ -536,11 +552,11 @@ namespace Format
     template<typename Reader, typename Element, NatS ... dimensions,
     typename = metaIf<std::is_fundamental<Element>::value, void>
     >
-    inline void deserialize(Reader&& reader, Core::Array<Element, dimensions...>& destination)
+    inline void deserialize(Reader&& reader, Core::StaticTensor<Element, dimensions...>& destination)
     {
         try
         {
-            reader(&destination[0], Core::Array<Element, dimensions...>::size * sizeof(Element));
+            reader(&destination[0], Core::StaticTensor<Element, dimensions...>::size * sizeof(Element));
         }
         catch (std::exception& e)
         {
@@ -548,15 +564,18 @@ namespace Format
         }
     }
     
+    /*
+     * Non-primitives, delegated format calls
+     */
     template<typename Element, NatS ... dimensions, typename Writer,
     typename = metaIf<not std::is_fundamental<Element>::value, void>,
     typename = void
     >
-    inline void serialize(Core::Array<Element, dimensions...> const & source, Writer&& writer)
+    inline void serialize(Core::StaticTensor<Element, dimensions...> const & source, Writer&& writer)
     {
         try
         {
-            for(NatS i = 0; i < Core::Array<Element, dimensions...>::size; i++)
+            for(NatS i = 0; i < Core::StaticTensor<Element, dimensions...>::size; i++)
             {
                 serialize(source[i], writer);
             }
@@ -571,11 +590,11 @@ namespace Format
     typename = metaIf<not std::is_fundamental<Element>::value, void>,
     typename = void
     >
-    inline void deserialize(Reader&& reader, Core::Array<Element, dimensions...>& destination)
+    inline void deserialize(Reader&& reader, Core::StaticTensor<Element, dimensions...>& destination)
     {
         try
         {
-            for(NatS i = 0; i < Core::Array<Element, dimensions...>::size; i++)
+            for(NatS i = 0; i < Core::StaticTensor<Element, dimensions...>::size; i++)
             {
                 deserialize(reader, destination[i]);
             }
