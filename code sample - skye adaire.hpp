@@ -298,6 +298,63 @@ namespace Core
         }
         
         /*
+         * Standard-conformant iterator
+         */
+        class Iterator: public std::iterator
+        <
+        std::input_iterator_tag,   // iterator_category
+        Element,                      // value_type
+        NatS                      // difference_type
+        >
+        {
+            Element * elementPointer;
+            
+        public:
+            
+            explicit Iterator(Element * elementPointer) :
+            elementPointer(elementPointer)
+            {}
+            
+            Iterator& operator++()
+            {
+                elementPointer++;
+                return *this;
+            }
+            
+            Iterator operator++(Int)
+            {
+                Iterator retval = *this;
+                ++(*this);
+                return retval;
+            }
+            
+            Bool operator==(Iterator other) const
+            {
+                return elementPointer == other.elementPointer;
+            }
+            
+            Bool operator!=(Iterator other) const
+            {
+                return !(*this == other);
+            }
+            
+            Element& operator*() const
+            {
+                return *elementPointer;
+            }
+        };
+        
+        Iterator begin()
+        {
+            return Iterator(elements);
+        }
+        
+        Iterator end()
+        {
+            return Iterator(&elements[size]);
+        }
+        
+        /*
          * Slice
          */
         template <class...> struct GetArray{};
