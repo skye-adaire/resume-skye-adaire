@@ -1,2 +1,5 @@
+Link to my public WebGL shaders:
+https://www.shadertoy.com/user/skye_adaire
 
-Please see https://github.com/skye-adaire/Core
+Link to my public C++ library:
+https://github.com/skye-adaire/Core
