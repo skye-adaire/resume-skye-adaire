@@ -8,4 +8,4 @@ Link to my public WebGL shaders:
 https://www.shadertoy.com/user/skye_adaire
 
 Link to my public C++ library:
-https://github.com/skye-adaire/Core
+https://github.com/skye-adaire/EasyAlgebra
