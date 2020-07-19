@@ -5,4 +5,4 @@ Link to my public WebGL shaders:
 https://www.shadertoy.com/user/skye_adaire
 
 Link to my open source libraries:
-https://github.com/skye-adaire/EasyAlgebra
+https://github.com/skye-adaire?tab=repositories
